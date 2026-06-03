@@ -1,0 +1,12 @@
+.venv/
+.env
+data/
+match_data/
+*.ipynb
+*.parquet
+api_call.py
+api_call copy.py
+main.py
+pueb.json
+pro_clubs_matches_*.json
+__pycache__/
