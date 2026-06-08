@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Meat Commission — Pro Clubs Stats</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <p>Loading stats…</p>
+  </div>
+
+  <div id="error-overlay" class="hidden">
+    <div class="error-box">
+      <p>⚠ <span id="error-message"></span></p>
+      <small>Make sure you're serving this folder over HTTP (not file://).</small>
+    </div>
+  </div>
+
+  <header>
+    <div class="header-inner">
+      <h1>Meat Commission</h1>
+      <p id="freshness-stamp" class="freshness"></p>
+    </div>
+  </header>
+
+  <div id="controls" class="hidden">
+    <div class="control-row">
+      <div class="control-group">
+        <label for="season-select">Season</label>
+        <select id="season-select"></select>
+      </div>
+      <div class="control-group">
+        <label>Competition</label>
+        <div class="toggle-group" role="group" aria-label="Competition filter">
+          <button class="toggle-btn active" data-comp="both">Both</button>
+          <button class="toggle-btn" data-comp="league">League</button>
+          <button class="toggle-btn" data-comp="playoff">Playoff</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <nav class="tab-bar" role="tablist">
+    <button class="tab-btn active" data-tab="players" role="tab" aria-selected="true">Players</button>
+    <button class="tab-btn" data-tab="analysis" role="tab" aria-selected="false">Analysis</button>
+  </nav>
+
+  <!-- Players Tab -->
+  <div id="tab-players" class="tab-content active" role="tabpanel">
+    <section id="section-results">
+      <h2>Recent Results</h2>
+      <div id="results-container"></div>
+    </section>
+
+    <div id="match-detail" class="hidden"></div>
+
+    <section id="section-leaderboard">
+      <h2>Goals + Assists</h2>
+      <div id="leaderboard-container"></div>
+    </section>
+
+    <div id="player-card" class="hidden"></div>
+  </div>
+
+  <!-- Analysis Tab -->
+  <div id="tab-analysis" class="tab-content" role="tabpanel">
+    <section id="section-gk">
+      <h2>Goalkeeper Impact</h2>
+      <p class="section-note">One dot per game. Larger diamond = condition mean.</p>
+      <div class="chart-container">
+        <canvas id="chart-gk"></canvas>
+      </div>
+      <div id="gk-stat-tiles"></div>
+    </section>
+
+    <section id="section-nvn">
+      <h2>n-vs-n Matchups</h2>
+      <p class="section-note">Player-count differential (us − them). Game count on each bar.</p>
+      <div id="nvn-container"><canvas id="chart-nvn"></canvas></div>
+    </section>
+
+    <section id="section-teamcomp">
+      <h2>Team Compositions</h2>
+      <p class="section-note">Lineups with ≥3 games, sorted by Wilson 95% CI lower bound — penalizes small samples.</p>
+      <div id="teamcomp-container"></div>
+      <h3>Per-Player Impact</h3>
+      <p class="section-note">Win% in games with vs. without each player, sorted by Wilson lower bound.</p>
+      <div id="playerimpact-container"></div>
+    </section>
+
+    <section id="section-form">
+      <h2>Player Form &amp; Archetype</h2>
+      <div id="form-container"></div>
+    </section>
+  </div>
+
+  <footer>
+    <p id="freshness-footer" class="freshness"></p>
+  </footer>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/sql-wasm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

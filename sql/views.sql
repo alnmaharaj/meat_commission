@@ -18,7 +18,10 @@ CREATE VIEW v_gk_impact AS
 SELECT has_user_gk,
        COUNT(*)              AS games,
        ROUND(AVG(shots_against),1) AS avg_shots_conceded,
-       ROUND(AVG(goals_conceded),1) AS avg_goals_conceded
+       ROUND(AVG(goals_conceded),1) AS avg_goals_conceded,
+       ROUND(AVG(CASE WHEN shots_against > 0
+                      THEN 1.0 - CAST(goals_conceded AS FLOAT)/shots_against
+                      ELSE NULL END)*100,1) AS avg_save_rate
 FROM v_team_match
 WHERE club_id = 127516
 GROUP BY has_user_gk;
@@ -45,6 +48,17 @@ SELECT num_human_players AS our_n, opp_num_human_players AS opp_n,
 FROM v_team_match
 WHERE club_id = 127516
 GROUP BY our_n, opp_n;
+
+DROP VIEW IF EXISTS v_nvn_diff;
+CREATE VIEW v_nvn_diff AS
+SELECT (num_human_players - opp_num_human_players) AS diff,
+       COUNT(*) AS games,
+       ROUND(AVG(is_win)*100,1) AS win_pct,
+       ROUND(AVG(goals_for - goals_conceded),2) AS avg_goal_diff
+FROM v_team_match
+WHERE club_id = 127516
+GROUP BY diff
+ORDER BY diff DESC;
 
 DROP VIEW IF EXISTS v_player_form;
 CREATE VIEW v_player_form AS
