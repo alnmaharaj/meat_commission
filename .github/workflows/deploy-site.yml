@@ -3,6 +3,7 @@ name: Deploy site
 on:
   push:
     branches: ["feature/build-and-load"]
+  workflow_dispatch:
 
 permissions:
   contents: read
