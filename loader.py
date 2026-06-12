@@ -2,7 +2,7 @@ import json, os, sqlite3, time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
-import requests
+from curl_cffi import requests
 
 OUR_CLUB_ID  = 127516
 PLATFORM     = "common-gen5"
@@ -23,7 +23,7 @@ SEED_ARCHETYPES = {
 # ---------------------------------------------------------------------------
 
 def build_session() -> requests.Session:
-    s = requests.Session()
+    s = requests.Session(impersonate="chrome")
     s.headers.update({
         "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                        "AppleWebKit/537.36 (KHTML, like Gecko) "
