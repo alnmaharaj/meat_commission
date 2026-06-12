@@ -2,7 +2,11 @@ name: Deploy site
 
 on:
   push:
-    branches: ["feature/build-and-load"]
+    branches: ["main"]
+    paths:
+      - "site/**"
+      - "warehouse/clubstats.db"
+      - ".github/workflows/deploy-site.yml"
   workflow_dispatch:
 
 permissions:
