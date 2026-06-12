@@ -1,27 +1,28 @@
 # Meat Commission — Pro Clubs Analytics
 
-EAFC26 Pro Clubs stats warehouse for club **127516**. An hourly GitHub Actions job fetches match data from the EA API, lands raw JSON, and loads a SQLite star schema. The database is committed to the repo — no paid services required.
+EAFC26 Pro Clubs stats warehouse for club **127516**. Match data is fetched from the EA API by a local Jupyter notebook, loaded into a SQLite star schema, and committed to the repo. GitHub Pages redeploys the dashboard automatically whenever the database changes. No paid services required.
 
 ---
 
 ## How it works
 
 ```
-EA Pro Clubs API  →  loader.py (GitHub Actions, hourly)  →  warehouse/clubstats.db  →  views
+api-call.ipynb (local)  →  loader.py  →  warehouse/clubstats.db  →  git push  →  GitHub Pages
 ```
 
-- Fetches the last ~5 league and playoff matches from `proclubs.ea.com`
-- Writes new matches to `raw/{league|playoff}/{matchId}.json` (idempotent)
-- Loads a star schema with both clubs per match (enables opponent scouting)
-- Rebuilds SQL views on every run
-- Commits `raw/` and `warehouse/` back to the repo
+- The notebook fetches the last ~5 league and playoff matches from `proclubs.ea.com` and lands them under `raw/{league|playoff}/{matchId}.json`
+- `loader.py` runs at the end of the notebook: idempotent upserts into the star schema, both clubs per match (enables opponent scouting), views rebuilt every run
+- A `git push` to `main` that touches `warehouse/clubstats.db` triggers `deploy-site.yml`, which republishes Pages
+
+> The fetch is **local-only** today: EA returns empty payloads to GitHub Actions runner IPs, so the previous hourly cron is gone. See `plans/` for the design docs and outstanding work.
 
 ---
 
 ## Repo layout
 
 ```
-loader.py                       # extract + transform + load
+api-call.ipynb                  # fetch matches + run loader.py (local entry point)
+loader.py                       # extract + transform + load (idempotent)
 requirements.txt
 raw/
   league/{matchId}.json         # raw landing zone, committed for replayability
@@ -34,21 +35,35 @@ site/
   index.html                    # single-page dashboard
   app.js                        # sql.js queries + Chart.js rendering
   styles.css
+plans/
+  completed/                    # design docs for shipped pieces (schema, loader, UI)
+  to-do/                        # outstanding task lists
 .github/workflows/
-  refresh.yml                   # hourly cron + manual trigger
-  deploy-site.yml               # deploys site/ + clubstats.db to GitHub Pages
+  deploy-site.yml               # deploys site/ + clubstats.db to GitHub Pages on push to main
 ```
 
 ---
 
-## Run locally
+## Refresh the data (the steady-state workflow)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-python loader.py
 
-# inspect
+# Open api-call.ipynb and Run All. The final cell calls loader.py:
+#   - fetches new league + playoff matches
+#   - lands them under raw/
+#   - upserts the warehouse + rebuilds views
+
+git add raw warehouse
+git commit -m "data refresh"
+git push                                            # triggers Pages redeploy via deploy-site.yml
+```
+
+You can also run the loader directly without the notebook:
+
+```bash
+python loader.py
 sqlite3 warehouse/clubstats.db "SELECT * FROM v_gk_impact;"
 ```
 
@@ -139,7 +154,9 @@ A static single-page dashboard lives in `site/`. It runs the SQLite database in-
 
 ### Deploy to GitHub Pages
 
-Push to `feature/build-and-load` — the `deploy-site.yml` workflow bundles `site/` with the latest `warehouse/clubstats.db` and deploys to Pages automatically. Enable under **Settings → Pages → Source: GitHub Actions**.
+`deploy-site.yml` runs on push to `main` whenever `site/**`, `warehouse/clubstats.db`, or the workflow itself changes. It bundles `site/` with the latest `clubstats.db` and publishes to Pages. Pages must be set to **Settings → Pages → Source: GitHub Actions**, and `main` must be allowed under the **github-pages** environment's deployment-branch rules.
+
+If a push doesn't touch the watched paths (e.g. a docs-only commit) the deploy won't fire automatically — run it manually from **Actions → Deploy site → Run workflow**.
 
 ### Run locally
 
@@ -151,15 +168,11 @@ python -m http.server 8080
 
 ---
 
-## Scheduling
+## Refresh cadence
 
-The cron runs hourly across the evening play window (6pm–midnight ET, year-round):
+Manual, on demand. The EA API rejects (or returns empty payloads to) GitHub Actions runner IPs, so the data fetch lives in `api-call.ipynb` and runs on the maintainer's machine. Push the resulting `raw/` + `warehouse/clubstats.db` changes to `main` and the dashboard updates within a couple of minutes.
 
-```
-0 0-5,22-23 * * *   # UTC — covers both EST and EDT without DST adjustments
-```
-
-A manual run button (`workflow_dispatch`) is available in the Actions tab.
+Re-enabling unattended refresh is tracked under `plans/to-do/` — see the relevant task list there.
 
 ---
 
