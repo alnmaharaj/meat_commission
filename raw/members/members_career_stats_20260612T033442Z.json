@@ -1,0 +1,131 @@
+{
+  "members": [
+    {
+      "name": "e11iscman",
+      "proPos": "25",
+      "gamesPlayed": "328",
+      "goals": "113",
+      "assists": "101",
+      "manOfTheMatch": "16",
+      "ratingAve": "6.5",
+      "prevGoals": "1",
+      "favoritePosition": "forward"
+    },
+    {
+      "name": "TubbierMussel92",
+      "proPos": "5",
+      "gamesPlayed": "422",
+      "goals": "65",
+      "assists": "34",
+      "manOfTheMatch": "6",
+      "ratingAve": "7.3",
+      "prevGoals": "0",
+      "favoritePosition": "defender"
+    },
+    {
+      "name": "lihas99",
+      "proPos": "14",
+      "gamesPlayed": "106",
+      "goals": "9",
+      "assists": "18",
+      "manOfTheMatch": "0",
+      "ratingAve": "6.6",
+      "prevGoals": "0",
+      "favoritePosition": "midfielder"
+    },
+    {
+      "name": "ValsaynViking",
+      "proPos": "25",
+      "gamesPlayed": "227",
+      "goals": "47",
+      "assists": "40",
+      "manOfTheMatch": "5",
+      "ratingAve": "7.0",
+      "prevGoals": "0",
+      "favoritePosition": "forward"
+    },
+    {
+      "name": "BelgianBageI",
+      "proPos": "25",
+      "gamesPlayed": "273",
+      "goals": "93",
+      "assists": "216",
+      "manOfTheMatch": "22",
+      "ratingAve": "8.0",
+      "prevGoals": "0",
+      "favoritePosition": "forward"
+    },
+    {
+      "name": "Mvaldez2611",
+      "proPos": "25",
+      "gamesPlayed": "590",
+      "goals": "829",
+      "assists": "628",
+      "manOfTheMatch": "182",
+      "ratingAve": "8.5",
+      "prevGoals": "1",
+      "favoritePosition": "forward"
+    },
+    {
+      "name": "redhood0502",
+      "proPos": "5",
+      "gamesPlayed": "216",
+      "goals": "4",
+      "assists": "10",
+      "manOfTheMatch": "6",
+      "ratingAve": "6.9",
+      "prevGoals": "0",
+      "favoritePosition": "defender"
+    },
+    {
+      "name": "Sm0kedMeatz",
+      "proPos": "14",
+      "gamesPlayed": "501",
+      "goals": "600",
+      "assists": "378",
+      "manOfTheMatch": "80",
+      "ratingAve": "7.9",
+      "prevGoals": "2",
+      "favoritePosition": "midfielder"
+    },
+    {
+      "name": "moeagle445",
+      "proPos": "14",
+      "gamesPlayed": "372",
+      "goals": "76",
+      "assists": "174",
+      "manOfTheMatch": "12",
+      "ratingAve": "7.4",
+      "prevGoals": "0",
+      "favoritePosition": "midfielder"
+    },
+    {
+      "name": "SnoopaKoopa",
+      "proPos": "25",
+      "gamesPlayed": "352",
+      "goals": "391",
+      "assists": "319",
+      "manOfTheMatch": "63",
+      "ratingAve": "8.0",
+      "prevGoals": "0",
+      "favoritePosition": "forward"
+    },
+    {
+      "name": "MajinnWill",
+      "proPos": "5",
+      "gamesPlayed": "151",
+      "goals": "26",
+      "assists": "26",
+      "manOfTheMatch": "0",
+      "ratingAve": "6.4",
+      "prevGoals": "1",
+      "favoritePosition": "defender"
+    }
+  ],
+  "positionCount": {
+    "midfielder": 3,
+    "goalkeeper": 0,
+    "forward": 5,
+    "defender": 3
+  }
+}
