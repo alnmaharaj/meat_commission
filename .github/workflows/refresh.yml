@@ -25,10 +25,15 @@ jobs:
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add raw warehouse
-          if git diff --staged --quiet; then
-            echo "No changes to commit."
+          # Gate on raw/ only: a new match writes a new file under raw/, but the DB
+          # bytes change on every run (views.sql is rebuilt each time). Committing on
+          # DB churn alone would produce empty "data refresh" commits, so only commit
+          # when raw/ actually gained matches, and include the DB alongside it.
+          git add raw
+          if git diff --staged --quiet -- raw; then
+            echo "No new matches landed; skipping commit (ignoring DB byte churn)."
           else
+            git add warehouse
             git commit -m "data refresh $(date -u +%FT%TZ)"
             git push
           fi
