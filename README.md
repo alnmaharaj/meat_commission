@@ -1,29 +1,36 @@
 # Meat Commission — Pro Clubs Analytics
 
-EAFC26 Pro Clubs stats warehouse for club **127516**. Match data is fetched from the EA API by a local Jupyter notebook, loaded into a SQLite star schema, and committed to the repo. GitHub Pages redeploys the dashboard automatically whenever the database changes. No paid services required.
+EAFC26 Pro Clubs stats warehouse for club **127516**. Match data is fetched from the EA API on an hourly GitHub Actions cron, loaded into a SQLite star schema, and committed to the repo. The dashboard on GitHub Pages redeploys whenever the database gains matches. No paid services required.
 
 ---
 
 ## How it works
 
 ```
-api-call.ipynb (local)  →  loader.py  →  warehouse/clubstats.db  →  git push  →  GitHub Pages
+refresh.yml (hourly cron)  →  loader.py  →  warehouse/clubstats.db  →  commit
+                                                     ↓
+                                          deploy-site.yml  →  GitHub Pages
 ```
 
-- The notebook fetches the last ~5 league and playoff matches from `proclubs.ea.com` and lands them under `raw/{league|playoff}/{matchId}.json`
-- `loader.py` runs at the end of the notebook: idempotent upserts into the star schema, both clubs per match (enables opponent scouting), views rebuilt every run
-- A `git push` to `main` that touches `warehouse/clubstats.db` triggers `deploy-site.yml`, which republishes Pages
+- `loader.py` fetches recent league and playoff matches from `proclubs.ea.com` and lands them under `raw/{league|playoff}/{matchId}.json`
+- Loading is idempotent: upserts into the star schema, both clubs per match (enables opponent scouting), views rebuilt every run
+- The refresh job commits only when the match count actually rises, then **explicitly dispatches** `deploy-site.yml`
 
-> The fetch is **local-only** today: EA returns empty payloads to GitHub Actions runner IPs, so the previous hourly cron is gone. See `plans/` for the design docs and outstanding work.
+> **Why the explicit dispatch:** GitHub deliberately suppresses workflow triggers for pushes made with `GITHUB_TOKEN`. `deploy-site.yml` watches `warehouse/clubstats.db` on push, so it never fired off a bot commit — the data kept landing in the repo while Pages served a months-old database. The refresh job now calls `createWorkflowDispatch` after a successful commit instead of relying on the push trigger.
+
+The fetch runs fine from GitHub-hosted runners; `curl_cffi`'s Chrome TLS impersonation is what makes that work. Do not drop it.
 
 ---
 
 ## Repo layout
 
 ```
-api-call.ipynb                  # fetch matches + run loader.py (local entry point)
-loader.py                       # extract + transform + load (idempotent)
+loader.py                       # fetch + extract + transform + load (idempotent)
+api-call.ipynb                  # optional local/exploratory entry point
 requirements.txt
+scripts/
+  diagnose_ea.py                # probe EA and report exactly what this machine gets
+  match_count.py                # warehouse row count, used by the commit gate
 raw/
   league/{matchId}.json         # raw landing zone, committed for replayability
   playoff/{matchId}.json
@@ -39,39 +46,37 @@ plans/
   completed/                    # design docs for shipped pieces (schema, loader, UI)
   to-do/                        # outstanding task lists
 .github/workflows/
-  deploy-site.yml               # deploys site/ + clubstats.db to GitHub Pages on push to main
+  refresh.yml                   # hourly fetch + load + commit, then dispatches the deploy
+  deploy-site.yml               # publishes site/ + clubstats.db to GitHub Pages
+  diagnose.yml                  # manual: what does EA return to an Actions runner?
 ```
 
 ---
 
-## Refresh the data (the steady-state workflow)
+## Refresh the data
+
+Normally you do nothing — the hourly cron handles it. To force a refresh, use
+**Actions → Refresh Pro Clubs warehouse → Run workflow**.
+
+To run the loader yourself:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 
-# Open api-call.ipynb and Run All. The final cell calls loader.py:
-#   - fetches new league + playoff matches
-#   - lands them under raw/
-#   - upserts the warehouse + rebuilds views
-
-git add raw warehouse
-git commit -m "data refresh"
-git push                                            # triggers Pages redeploy via deploy-site.yml
-```
-
-You can also run the loader directly without the notebook:
-
-```bash
 python loader.py
 sqlite3 warehouse/clubstats.db "SELECT * FROM v_gk_impact;"
 ```
 
-To rebuild the warehouse from scratch from raw files:
+Environment flags:
 
-```bash
-REBUILD=1 python loader.py
-```
+| Flag | Effect |
+|---|---|
+| `REBUILD=1` | rebuild the warehouse from scratch out of `raw/` (implies no fetch) |
+| `NO_FETCH=1` | load only what is already in `raw/`, skipping the EA call |
+| `MAX_RESULTS=n` | matches to request per call (default 100; falls back to a bare call if EA rejects it) |
+
+> Your local clone will usually be behind — the bot commits to `main` several times a day. `git pull` before doing anything.
 
 ---
 
@@ -170,11 +175,48 @@ python -m http.server 8080
 
 ## Refresh cadence
 
-Manual, on demand. The EA API rejects (or returns empty payloads to) GitHub Actions runner IPs, so the data fetch lives in `api-call.ipynb` and runs on the maintainer's machine. Push the resulting `raw/` + `warehouse/clubstats.db` changes to `main` and the dashboard updates within a couple of minutes.
+Automatic — `refresh.yml` runs hourly, 24/7, from `main`. Nothing needs to be running locally.
 
-Re-enabling unattended refresh is tracked under `plans/to-do/` — see the relevant task list there.
+| Setting | Value | Why |
+|---|---|---|
+| cron | `0 * * * *` | matches can be played at any hour; the old `0 0-5,22-23` window only covered evening ET |
+| `MAX_RESULTS` | `100` | EA defaults to ~5 matches per call, so a long session between polls could truncate |
+| commit gate | `dim_match` row count rises | DB bytes churn every run (views rebuilt), so a byte diff would commit constantly |
+
+### Failure behaviour
+
+The loader **exits non-zero** when EA does not return usable data, and the workflow opens (or updates, at most daily) a `refresh-broken` issue.
+
+This matters because it used to do the opposite. `main()` caught every fetch exception, printed `WARN:` and exited 0 — so a blocked or broken fetch was indistinguishable from a quiet evening, and the job showed green either way. Cases now treated as hard failures:
+
+- non-200 from EA
+- a 200 that is not JSON (Akamai challenge / block page)
+- a session that cannot be established with `ea.com`
+- **an empty match list when `raw/` already holds matches** — EA serves recent history unconditionally, so this means a block, an outage, or an FC title rollover, never an idle period
+
+### When something breaks
+
+```bash
+python scripts/diagnose_ea.py     # locally
+```
+
+then run **Actions → Diagnose EA API access** and compare:
+
+| Local | Actions | Meaning |
+|---|---|---|
+| works | works | EA is fine — the bug is in the loader or the workflow |
+| fails | fails | EA changed or broke the endpoint (check `forums.ea.com`; there was a real outage on 2026-06-19) |
+| works | fails | the runner IP is blocked — the fetch has to move off GitHub-hosted runners |
 
 ---
+
+## EAFC27 rollover
+
+Known before the transition:
+
+- **`season_id` is `'0'` on every match** — that is EA's own value, not a parse bug. There is currently **no discriminator between EAFC26 and EAFC27 data**; FC27 matches will merge into the same tables. If you want them separable, add a `game_version` column to `dim_match` (set at load time, backfilled as `EAFC26`) *before* the first FC27 match lands, since `raw/` replays make it easy to backfill but only while every file is still FC26.
+- **`platform=common-gen5`** and the `/api/fc/` path are pinned in `loader.py`. Both have survived FC24→25→26, but confirm against a live response after launch rather than assuming.
+- **Club 127516 may reset.** If EA starts returning an empty match list, the loader now fails hard rather than sitting green (see *Failure behaviour*), so you will find out the same day instead of months later.
 
 ## Validation checks
 

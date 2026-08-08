@@ -1,4 +1,4 @@
-import json, os, sqlite3, time
+import json, os, sqlite3, sys, time
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -11,6 +11,14 @@ DB_PATH      = Path("warehouse/clubstats.db")
 RAW_DIR      = Path("raw")
 MATCH_TYPES  = {"leagueMatch": "league", "playoffMatch": "playoff"}
 REBUILD      = os.environ.get("REBUILD") == "1"
+
+# NO_FETCH=1 skips the EA call entirely and loads only what is already in raw/.
+# Useful for replaying the landing zone offline, and implied by REBUILD.
+NO_FETCH     = os.environ.get("NO_FETCH") == "1"
+
+# EA defaults to ~5 matches per call. The endpoint accepts maxResultCount; asking
+# for more shrinks the window in which an unpolled session can silently truncate.
+MAX_RESULTS  = int(os.environ.get("MAX_RESULTS", "100"))
 
 SEED_ARCHETYPES = {
     # "12": ("Playmaker", "midfield"),
@@ -37,12 +45,69 @@ def build_session() -> requests.Session:
     s.get("https://www.ea.com/", timeout=15)
     return s
 
-def fetch_and_land(session, match_type: str, competition: str) -> int:
+class FetchError(RuntimeError):
+    """Raised when EA does not give us a usable match list."""
+
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
+
+
+def describe(resp) -> str:
+    """Compact forensic summary of a response — the thing that was missing.
+
+    A blocked runner and a quiet night both used to look like 'landed 0'. This
+    makes them distinguishable in the Actions log without any guesswork.
+    """
+    body = resp.text or ""
+    preview = body[:300].replace("\n", " ").replace("\r", " ")
+    return (f"HTTP {resp.status_code} | {resp.headers.get('content-type', '?')} | "
+            f"{len(body)} bytes | server={resp.headers.get('server', '?')} | "
+            f"body[:300]={preview!r}")
+
+
+def _get_matches(session, match_type: str, max_results: int | None):
+    """One EA call. Returns the parsed list, or raises FetchError with detail."""
     url = "https://proclubs.ea.com/api/fc/clubs/matches"
     params = {"clubIds": str(OUR_CLUB_ID), "platform": PLATFORM, "matchType": match_type}
-    resp = session.get(url, params=params, timeout=20)
-    resp.raise_for_status()
-    matches = resp.json()
+    if max_results:
+        params["maxResultCount"] = str(max_results)
+
+    resp = session.get(url, params=params, timeout=30)
+
+    if resp.status_code != 200:
+        raise FetchError(f"non-200 from EA — {describe(resp)}", status=resp.status_code)
+
+    # An Akamai/WAF block page returns 200 with HTML. Catch that before json().
+    try:
+        payload = resp.json()
+    except Exception:
+        raise FetchError(f"response was not JSON (likely a block/challenge page) — {describe(resp)}")
+
+    if not isinstance(payload, list):
+        raise FetchError(f"expected a JSON list, got {type(payload).__name__} — {describe(resp)}")
+
+    return payload
+
+
+def fetch_and_land(session, match_type: str, competition: str):
+    """Fetch one match type and land new files. Returns (landed, returned).
+
+    `returned` is what EA gave us; `landed` is how many were new. The pair is
+    what lets the caller tell 'EA is talking to us and nothing new happened'
+    apart from 'EA gave us nothing'.
+    """
+    try:
+        matches = _get_matches(session, match_type, MAX_RESULTS)
+    except FetchError as e:
+        # Only retry bare if the failure plausibly concerns the optional
+        # parameter. A 403, a 5xx or a challenge page means EA is refusing us
+        # outright — retrying just doubles the log noise and the request count.
+        if e.status not in (400, 404, 422):
+            raise
+        print(f"  maxResultCount={MAX_RESULTS} rejected ({e}); retrying without it")
+        matches = _get_matches(session, match_type, None)
+
     out_dir = RAW_DIR / competition
     out_dir.mkdir(parents=True, exist_ok=True)
     landed = 0
@@ -52,9 +117,13 @@ def fetch_and_land(session, match_type: str, competition: str) -> int:
             continue
         fp = out_dir / f"{mid}.json"
         if not fp.exists():
-            fp.write_text(json.dumps(m, indent=2))
+            # newline="\n" so a run on Windows writes the same bytes as a run on
+            # the Linux runner. Without it, Python translates \n to \r\n locally
+            # and every locally-fetched file shows up as modified against the
+            # CI-fetched copy — pure line-ending churn across the landing zone.
+            fp.write_text(json.dumps(m, indent=2), newline="\n")
             landed += 1
-    return landed
+    return landed, len(matches)
 
 
 # ---------------------------------------------------------------------------
@@ -257,17 +326,59 @@ def migrate_match_data():
 def already_loaded(conn) -> set:
     return {r[0] for r in conn.execute("SELECT match_key FROM dim_match")}
 
+def run_fetch() -> int:
+    """Fetch every match type. Returns total files landed.
+
+    Raises FetchError if *no* match type came back cleanly — that is a broken
+    pipeline, not a quiet evening, and the workflow must go red for it.
+    """
+    try:
+        session = build_session()
+    except Exception as e:
+        raise FetchError(f"could not establish a session with ea.com: {e!r}") from e
+
+    landed_total = 0
+    failures = []
+    for match_type, competition in MATCH_TYPES.items():
+        try:
+            have = len(list((RAW_DIR / competition).glob("*.json")))
+            landed, returned = fetch_and_land(session, match_type, competition)
+            landed_total += landed
+            print(f"{competition}: EA returned {returned} matches, {landed} new "
+                  f"({have} already landed)")
+
+            # EA returns the last N matches regardless of how long ago they were
+            # played, so an empty list is not "a quiet week" — it means EA has no
+            # history for this club. Against an existing landing zone that is a
+            # real fault: an IP-reputation block, or the club being reset at an FC
+            # title rollover. Either way it must go red rather than sit green.
+            if returned == 0 and have > 0:
+                raise FetchError(
+                    f"EA returned 0 {competition} matches but raw/{competition} already "
+                    f"holds {have}. EA serves recent history unconditionally, so this is "
+                    f"a block, an outage, or a title rollover — not an idle period."
+                )
+            time.sleep(2)
+        except FetchError as e:
+            print(f"ERROR: fetch {competition} failed: {e}")
+            failures.append(competition)
+
+    if len(failures) == len(MATCH_TYPES):
+        raise FetchError(
+            f"every match type failed ({', '.join(failures)}). The pipeline is not "
+            f"collecting data. See the per-type diagnostics above."
+        )
+    return landed_total
+
+
 def main():
     migrate_match_data()
 
-    session = build_session()
-    for match_type, competition in MATCH_TYPES.items():
-        try:
-            n = fetch_and_land(session, match_type, competition)
-            print(f"{competition}: landed {n} new match files")
-            time.sleep(2)
-        except Exception as e:
-            print(f"WARN: fetch {competition} failed: {e}")
+    if NO_FETCH or REBUILD:
+        print(f"fetch skipped (NO_FETCH={int(NO_FETCH)}, REBUILD={int(REBUILD)}); "
+              f"loading from raw/ only")
+    else:
+        run_fetch()
 
     conn = get_conn()
     loaded = set() if REBUILD else already_loaded(conn)
@@ -297,4 +408,11 @@ def main():
     print("done")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except FetchError as e:
+        # Exit non-zero so the workflow goes red. The previous behaviour printed
+        # a warning and exited 0, which is why ~450 scheduled runs since June 12
+        # reported success while collecting nothing.
+        print(f"\nFATAL: {e}", file=sys.stderr)
+        sys.exit(1)
