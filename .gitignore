@@ -10,3 +10,6 @@ main.py
 pueb.json
 pro_clubs_matches_*.json
 __pycache__/
+
+# Local dev copy only; the deploy injects warehouse/clubstats.db
+site/clubstats.db

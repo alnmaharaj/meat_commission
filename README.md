@@ -165,11 +165,25 @@ If a push doesn't touch the watched paths (e.g. a docs-only commit) the deploy w
 
 ### Run locally
 
+`site/clubstats.db` is gitignored — the deploy injects `warehouse/clubstats.db` at
+build time, so the only copy in `site/` is your local one. Refresh it before serving:
+
 ```bash
-cd site
-python -m http.server 8080
+cp warehouse/clubstats.db site/clubstats.db
+cd site && python -m http.server 8080
 # open http://localhost:8080
 ```
+
+> A stale `site/clubstats.db` used to be committed. It was never served (the deploy
+> overwrites it), but it made "which database am I looking at?" needlessly confusing.
+
+### If the dashboard looks stale
+
+The footer stamp reads `MAX(match_timestamp)` straight out of the loaded database, so
+an old date means the **browser has an old file**, not that the pipeline is behind.
+Check the size of `clubstats.db` in DevTools → Network: anything around 327 KB is the
+June database; a current one is considerably larger. `app.js` now fetches with
+`cache: 'no-cache'` to force revalidation, which should prevent this recurring.
 
 ---
 

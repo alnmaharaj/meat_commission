@@ -14,7 +14,12 @@ async function initDb() {
   const SQL = await initSqlJs({
     locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.10.3/${f}`
   });
-  const resp = await fetch('clubstats.db');
+  // cache: 'no-cache' forces a revalidation against the server on every load.
+  // Without it the browser happily serves a months-old clubstats.db from disk
+  // long after a successful deploy — the page looks stale even though Pages is
+  // serving current data. This still uses the HTTP cache when the ETag matches,
+  // so an unchanged database costs a 304 rather than a re-download.
+  const resp = await fetch('clubstats.db', { cache: 'no-cache' });
   if (!resp.ok) throw new Error(`Could not fetch database (HTTP ${resp.status})`);
   db = new SQL.Database(new Uint8Array(await resp.arrayBuffer()));
 }
