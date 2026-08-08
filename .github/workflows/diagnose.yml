@@ -1,0 +1,22 @@
+name: Diagnose EA API access
+
+# Manual only. Run this from Actions -> Diagnose EA API access -> Run workflow
+# to see exactly what EA returns to a GitHub-hosted runner. Compare the output
+# against `python scripts/diagnose_ea.py` on your own machine.
+#
+# Same output both places  -> runner is fine, look elsewhere.
+# Empty list / block page  -> the runner IP is blocked; use the Worker relay.
+on:
+  workflow_dispatch: {}
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - name: Probe EA
+        run: python scripts/diagnose_ea.py

@@ -1,11 +1,18 @@
 name: Refresh Pro Clubs warehouse
+
 on:
+  # Hourly, 24/7. The old window (22:00-05:00 UTC) only covered evening ET, so
+  # anything played outside it waited for the next evening. Matches can happen
+  # any time, and with maxResultCount the per-call cost is the same.
   schedule:
-    - cron: "0 0-5,22-23 * * *"   # hourly, ~6pm-midnight ET year-round (UTC; no DST)
-  workflow_dispatch: {}            # manual run button
+    - cron: "0 * * * *"
+
+  workflow_dispatch: {}
 
 permissions:
-  contents: write                  # needed to commit the DB + raw back
+  contents: write
+  issues: write                    # needed to raise the failure alert
+  actions: write                   # needed to dispatch the deploy workflow
 
 concurrency:
   group: refresh
@@ -20,20 +27,105 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install -r requirements.txt
-      - run: python loader.py
+
+      - name: Matches before
+        id: before
+        run: echo "n=$(python scripts/match_count.py)" >> "$GITHUB_OUTPUT"
+
+      - name: Load
+        env:
+          MAX_RESULTS: "100"
+        run: python loader.py
+
+      - name: Matches after
+        id: after
+        run: echo "n=$(python scripts/match_count.py)" >> "$GITHUB_OUTPUT"
+
       - name: Commit changes
+        if: steps.before.outputs.n != steps.after.outputs.n
         run: |
+          echo "matches: ${{ steps.before.outputs.n }} -> ${{ steps.after.outputs.n }}"
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          # Gate on raw/ only: a new match writes a new file under raw/, but the DB
-          # bytes change on every run (views.sql is rebuilt each time). Committing on
-          # DB churn alone would produce empty "data refresh" commits, so only commit
-          # when raw/ actually gained matches, and include the DB alongside it.
-          git add raw
-          if git diff --staged --quiet -- raw; then
-            echo "No new matches landed; skipping commit (ignoring DB byte churn)."
-          else
-            git add warehouse
-            git commit -m "data refresh $(date -u +%FT%TZ)"
-            git push
-          fi
+          # Gate on the warehouse row count, not on git diff. The DB bytes churn
+          # every run (views.sql is rebuilt), so diffing the DB alone would produce
+          # empty commits.
+          git add raw warehouse
+          git commit -m "data refresh $(date -u +%FT%TZ)"
+          git push
+
+      # Pushes made with GITHUB_TOKEN deliberately do not trigger other workflows,
+      # so deploy-site.yml never fired off a data-refresh commit on its own — which
+      # is why the site needed a manual deploy. Dispatch it explicitly instead.
+      - name: Trigger site deploy
+        if: steps.before.outputs.n != steps.after.outputs.n
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'deploy-site.yml',
+              ref: 'main',
+            });
+
+      - name: No new data
+        if: steps.before.outputs.n == steps.after.outputs.n
+        run: echo "Fetch succeeded; no new matches since last run. Nothing to commit."
+
+  # A failed fetch used to exit 0 and show green. Now the loader exits non-zero
+  # and this job turns that into something you will actually notice.
+  alert:
+    needs: refresh
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const label = 'refresh-broken';
+            const url = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}` +
+                        `/actions/runs/${context.runId}`;
+
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: label,
+            });
+
+            const body = `The scheduled refresh failed.\n\n` +
+                         `Run: ${url}\n\n` +
+                         `Check the \`Load\` step for the EA response diagnostics ` +
+                         `(status, content-type, body preview). If EA returned an ` +
+                         `empty list or a challenge page, run **Diagnose EA API ` +
+                         `access** both locally and on Actions and compare — that ` +
+                         `separates an EA-side change (fails everywhere) from a ` +
+                         `runner-IP block (fails only on Actions).`;
+
+            if (existing.data.length > 0) {
+              // An hourly cron would otherwise post 24 comments a day. One open
+              // issue is the signal; add a daily heartbeat and nothing more.
+              const issue = existing.data[0];
+              const age = Date.now() - new Date(issue.updated_at).getTime();
+              if (age > 24 * 60 * 60 * 1000) {
+                await github.rest.issues.createComment({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  body: `Still failing.\n\n${body}`,
+                });
+              } else {
+                core.info(`Issue #${issue.number} already open and recently updated; not commenting.`);
+              }
+            } else {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: 'Pro Clubs refresh is failing',
+                labels: [label],
+                body,
+              });
+            }
